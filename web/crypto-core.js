@@ -36,8 +36,21 @@ export async function decryptPayload(record, key, subtle = crypto.subtle) {
   if (new Set(validated.map(entry => entry.id)).size !== validated.length) throw new Error('Vault contains duplicate item IDs.');
   return validated;
 }
+export function validateBackupEnvelope(backup) {
+  if (!backup || typeof backup !== 'object' || Array.isArray(backup) || backup.app !== 'PassSafe' ||
+      backup.formatVersion !== 1 || backup.kdf !== 'PBKDF2-SHA256' || backup.iterations !== KDF_ITERATIONS) {
+    throw new Error('This is not a supported PassSafe backup.');
+  }
+  const salt = fromB64(backup.salt);
+  const iv = fromB64(backup.iv);
+  const ciphertext = fromB64(backup.ciphertext);
+  if (salt.length !== 16 || iv.length !== 12 || ciphertext.length < 16 || ciphertext.length > MAX_PAYLOAD_BYTES + 16) {
+    throw new Error('Backup cryptographic metadata is invalid.');
+  }
+  return { kdf: backup.kdf, iterations: backup.iterations, salt: backup.salt, iv: backup.iv, ciphertext: backup.ciphertext };
+}
 export function validateEntry(entry) {
-  if (!entry || typeof entry !== 'object' || typeof entry.id !== 'string' || typeof entry.title !== 'string' || typeof entry.password !== 'string') throw new Error('Vault contains an invalid item.');
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.id !== 'string' || !entry.id.trim() || entry.id.length > 128 || typeof entry.title !== 'string' || !entry.title.trim() || entry.title.length > 120 || typeof entry.password !== 'string' || !entry.password || entry.password.length > 4096) throw new Error('Vault contains an invalid item.');
   const fields = ['title','username','password','url','notes','category'];
   const limits = { title:120, username:254, password:4096, url:2048, notes:5000, category:30 };
   const clean = { id:entry.id, favorite:entry.favorite === true, createdAt:Number(entry.createdAt)||Date.now(), updatedAt:Number(entry.updatedAt)||Date.now() };

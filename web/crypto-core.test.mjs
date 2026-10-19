@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { KDF_ITERATIONS, fromB64, deriveKey, encryptPayload, decryptPayload } from './crypto-core.js';
+import { KDF_ITERATIONS, fromB64, deriveKey, encryptPayload, decryptPayload, validateEntry, validateBackupEnvelope } from './crypto-core.js';
 const crypto = webcrypto;
 const subtle = webcrypto.subtle;
 const fixture = { version:1, entries:[{id:'test-id',title:'Example',username:'user@example.com',password:'correct horse battery staple',url:'https://example.com',notes:'private note',category:'Login',favorite:true,createdAt:1,updatedAt:1}] };
@@ -45,4 +45,23 @@ test('base64 conversion handles large data and rejects oversized input', () => {
   const encoded = Buffer.from(bytes).toString('base64');
   assert.equal(fromB64(encoded).length, bytes.length);
   assert.throws(() => fromB64('A'.repeat(20_000_001)), /Invalid backup data/);
+});
+
+
+test('rejects entries with empty IDs, titles, or passwords', () => {
+  const valid = { id:'entry-1', title:'Example', username:'', password:'secret', url:'', notes:'', category:'Login' };
+  assert.throws(() => validateEntry({ ...valid, id:'' }), /invalid item/);
+  assert.throws(() => validateEntry({ ...valid, title:'  ' }), /invalid item/);
+  assert.throws(() => validateEntry({ ...valid, password:'' }), /invalid item/);
+  assert.throws(() => validateEntry({ ...valid, id:'x'.repeat(129) }), /invalid item/);
+});
+
+test('validates backup metadata lengths before attempting decryption', () => {
+  const valid = { app:'PassSafe', formatVersion:1, kdf:'PBKDF2-SHA256', iterations:KDF_ITERATIONS,
+    salt:Buffer.alloc(16, 1).toString('base64'), iv:Buffer.alloc(12, 2).toString('base64'),
+    ciphertext:Buffer.alloc(16, 3).toString('base64') };
+  assert.equal(validateBackupEnvelope(valid).iterations, KDF_ITERATIONS);
+  assert.throws(() => validateBackupEnvelope({ ...valid, salt:Buffer.alloc(8).toString('base64') }), /metadata/);
+  assert.throws(() => validateBackupEnvelope({ ...valid, iv:Buffer.alloc(8).toString('base64') }), /metadata/);
+  assert.throws(() => validateBackupEnvelope({ ...valid, iterations:1 }), /supported/);
 });

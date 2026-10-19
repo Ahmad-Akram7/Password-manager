@@ -20,7 +20,8 @@ Open `http://localhost:8000`. A current browser with Web Crypto and IndexedDB is
 - Stores logins, usernames, website URLs, categories, favorites, and notes.
 - Supports search, editing, deletion, and a cryptographically random password generator.
 - Exports and restores encrypted JSON backups.
-- Locks after five minutes without activity.
+- Locks after five minutes without activity and when the browser tab is hidden.
+- Serializes vault writes so rapid edits do not overwrite each other with stale snapshots.
 
 ## Deploy
 
