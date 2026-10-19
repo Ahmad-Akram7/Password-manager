@@ -67,7 +67,5 @@ test('merges new accounts and skips duplicate site/account identities', () => {
 });
 
 test('skips passwords that exceed the vault field limit rather than truncating them', () => {
-  const result = normalizeBrowserCSV('name,url,username,password\\nToo long,https://example.com,user,' + 'x'.repeat(4097), makeId);
-  assert.equal(result.entries.length, 0);
-  assert.equal(result.skipped, 1);
+  assert.throws(() => normalizeBrowserCSV('name,url,username,password\\nToo long,https://example.com,user,' + 'x'.repeat(4097), makeId), /No usable passwords/);
 });
