@@ -236,7 +236,9 @@ async function restoreEncryptedBackup(file, text) {
   const password = window.prompt('Enter the master password used when this backup was exported. It is processed locally and is not sent anywhere.');
   if (password === null) return;
   const key = await deriveKey(password, fromB64(envelope.salt));
-  const imported = await decryptPayload(envelope, key);
+  let imported;
+  try { imported = await decryptPayload(envelope, key); }
+  catch { throw new Error('Incorrect master password or damaged encrypted backup.'); }
   if (!window.confirm(`Restore ${imported.length} items? This replaces the current local vault and makes the backup's master password the password for this vault.`)) return;
   const record = { id:'primary', version:1, ...envelope, updatedAt:Date.now() };
   const session = vaultSession;
@@ -257,10 +259,10 @@ async function importCSV(text) {
     toast(`No new passwords imported; ${merged.duplicates} duplicate(s) were skipped.`);
     return;
   }
-  const summary = `Import ${merged.added} password(s)? ${merged.duplicates} duplicate(s) will be skipped. Existing vault entries will be kept.`;
+  const summary = `Import ${merged.added} password(s)? ${merged.duplicates} duplicate(s) and ${parsed.skipped} unusable row(s) will be skipped. Existing vault entries will be kept.`;
   if (!window.confirm(summary)) return;
   await commitEntries(merged.entries);
-  toast(`Imported ${merged.added} password(s); skipped ${merged.duplicates} duplicate(s).`);
+  toast(`Imported ${merged.added}; skipped ${merged.duplicates} duplicate(s) and ${parsed.skipped} unusable row(s).`);
   resetAutoLock();
 }
 async function importFile(file) {
