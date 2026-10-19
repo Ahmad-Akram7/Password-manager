@@ -1,7 +1,7 @@
 export const KDF_ITERATIONS = 600000;
 const ADDITIONAL_DATA = new TextEncoder().encode('PassSafe:v1');
 const MAX_PAYLOAD_BYTES = 14_000_000;
-const toB64 = bytes => {
+export const toB64 = bytes => {
   const data = new Uint8Array(bytes);
   let binary = '';
   for (let offset = 0; offset < data.length; offset += 0x8000) {
