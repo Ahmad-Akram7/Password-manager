@@ -1,1 +1,10 @@
 __pycache__/
+*.py[cod]
+passwords.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+node_modules/
+.DS_Store
+passsafe-backup-*.json
