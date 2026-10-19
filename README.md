@@ -1,59 +1,36 @@
-# 🔑 PassSafe - A Secure Password Manager
+# PassSafe password manager
 
-## Introduction
+PassSafe has a Python terminal app and a static web vault. The web version is in `web/` and runs in your browser. It stores one encrypted vault in that browser profile; there is no account, server-side password storage, or automatic sync.
 
-This project is a secure password manager implemented in Python. It provides a modern and stylish Textual User Interface (TUI) to securely store, retrieve, update, and delete your passwords. The application uses strong AES encryption to protect your sensitive data.
+## Web vault
 
-## Features
+The web app uses the browser's Web Crypto API to derive an AES-256-GCM key from your master password. It encrypts the vault before writing it to IndexedDB. Search, categories, favorites, notes, and password generation work locally. You can export an encrypted backup and restore it on another device.
 
-- **Modern TUI:** A "cool and flashy" retro-futuristic TUI built with `textual`.
-- **Strong Encryption:** Passwords are encrypted using AES with a key derived from your master password using PBKDF2.
-- **Password Generation:** Generate strong, random passwords directly within the application.
-- **CRUD Functionality:** Add, retrieve, update, and delete your passwords.
+### Run it locally
 
-## Files
+Use a current version of Node.js, then run:
 
-- **`tui_password_manager.py`:** The main application file that runs the `textual` TUI.
-- **`password.py`:** The backend module that handles all the encryption and database logic.
-- **`tui.css`:** The CSS file for styling the TUI.
-- **`passwords.db`:** The SQLite database file where your encrypted passwords are stored.
+```bash
+cd web
+npm test
+python -m http.server 8000
+```
 
-## Usage
+Open `http://localhost:8000`. Web Crypto is available on localhost and HTTPS origins. Create a long, unique master passphrase and keep an encrypted backup somewhere safe.
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/Ahmad-Akram7/Password-manager.git
-   ```
-2. **Navigate to the project directory:**
-   ```bash
-   cd Password-manager
-   ```
-3. **Install the dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. **Run the application:**
-   ```bash
-   python tui_password_manager.py
-   ```
+### Deploy to Cloudflare Pages
 
-## The TUI
+1. Connect this GitHub repository to Cloudflare Pages.
+2. Set the production branch to the branch you want to release.
+3. Set the build command to `exit 0` and the output directory to `web`.
+4. Deploy, then check the site on desktop and mobile before adding real credentials.
 
-The application will launch a TUI in your terminal. You can navigate the TUI using your keyboard.
+The `web/_headers` file sets browser security headers for Cloudflare Pages. The GitHub Actions workflow runs the crypto tests and JavaScript syntax check when web files change.
 
-- **`Add Password`:** Add a new username and password. You can also generate a random password.
-- **`Retrieve Passwords`:** View all your stored passwords after entering your master password.
-- **`Update Password`:** Update the password for an existing username.
-- **`Delete Password`:** Delete a password for a given username.
-- **`Quit`:** Press `q` to exit the application.
+## Python terminal app
 
-## Security
+The original Textual terminal app remains available. Install its dependencies with `pip install -r requirements.txt`, then run `python tui_password_manager.py`. It uses a separate SQLite database and does not share data with the web vault.
 
-The application uses the `cryptography` library to implement strong encryption.
+## Before using it for important accounts
 
-- **AES Encryption:** Passwords are encrypted using Fernet (AES128 in CBC mode with PKCS7 padding).
-- **PBKDF2 Key Derivation:** The encryption key is derived from your master password using PBKDF2 with a random salt for each password. This makes it highly resistant to brute-force attacks.
-
-## Conclusion
-
-This password manager provides a secure and user-friendly way to manage your passwords directly from your terminal. The use of strong encryption and a modern TUI makes it a significant improvement over simple command-line password managers.
+Read [web/SECURITY.md](web/SECURITY.md). This project has not had an independent security audit. Losing the master password means losing access to the vault, so keep backups and test restoring one. Never commit `passwords.db`, exported backups, or other files containing credentials.
