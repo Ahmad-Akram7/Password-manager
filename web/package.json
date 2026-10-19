@@ -1,1 +1,1 @@
-{"name":"passsafe-local-vault","version":"1.0.0","private":true,"type":"module","scripts":{"test":"node --test crypto-core.test.mjs"}}
+{"name":"passsafe-local-vault","version":"1.0.0","private":true,"type":"module","scripts":{"test":"node --test *.test.mjs"}}
