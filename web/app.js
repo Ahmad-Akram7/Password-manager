@@ -1,4 +1,4 @@
-import { KDF_ITERATIONS, toB64, fromB64, deriveKey, encryptPayload, decryptPayload, validateEntry } from './crypto-core.js';
+import { KDF_ITERATIONS, toB64, fromB64, deriveKey, encryptPayload, decryptPayload, validateEntry, validateBackupEnvelope } from './crypto-core.js';
 
 /* PassSafe stores only an authenticated ciphertext in IndexedDB. No network calls. */
 const DB_NAME = 'passsafe-local-vault';
@@ -24,7 +24,8 @@ let activeFilter = 'all';
 let pendingDeleteId = null;
 let toastTimeout;
 let lockTimeout;
-let lastActivity = Date.now();
+let writeQueue = Promise.resolve();
+let vaultSession = 0;
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -87,13 +88,31 @@ function render() {
   }
 }
 async function persist(nextEntries = entries) {
-  const encrypted = await encryptPayload({ version:1, entries:nextEntries }, vaultKey);
-  const record = { id:'primary', version:1, kdf:'PBKDF2-SHA256', iterations:KDF_ITERATIONS, salt:vaultRecord.salt, ...encrypted, updatedAt:Date.now() };
+  const key = vaultKey;
+  const baseRecord = vaultRecord;
+  if (!key || !baseRecord) throw new Error('Vault is locked. Unlock it before saving.');
+  const encrypted = await encryptPayload({ version:1, entries:nextEntries }, key);
+  const record = { id:'primary', version:1, kdf:'PBKDF2-SHA256', iterations:KDF_ITERATIONS, salt:baseRecord.salt, ...encrypted, updatedAt:Date.now() };
   await writeRecord(record);
-  vaultRecord = record;
+  if (vaultKey === key && vaultRecord === baseRecord) vaultRecord = record;
+}
+function commitEntries(update) {
+  const session = vaultSession;
+  const task = writeQueue.then(async () => {
+    if (session !== vaultSession || !vaultKey || !vaultRecord) throw new Error('Vault is locked. Unlock it before saving.');
+    const nextEntries = typeof update === 'function' ? update(entries) : update;
+    await persist(nextEntries);
+    if (session !== vaultSession || !vaultKey) throw new Error('Vault locked before the save completed.');
+    entries = nextEntries;
+    render();
+    return nextEntries;
+  });
+  writeQueue = task.catch(() => {});
+  return task;
 }
 async function unlockOrCreate(event) {
   event.preventDefault(); showError(''); const password = ui.master.value;
+  const session = ++vaultSession;
   if (password.length < 12) { showError('Use at least 12 characters. A longer passphrase is safer.'); return; }
   ui.unlockBtn.disabled = true; ui.unlockBtn.textContent = 'Working securely…';
   try {
@@ -102,6 +121,7 @@ async function unlockOrCreate(event) {
     if (existing) {
       const key = await deriveKey(password, fromB64(existing.salt));
       const opened = await decryptPayload(existing, key);
+      if (session !== vaultSession) return;
       vaultRecord = existing; vaultKey = key; entries = opened;
     } else {
       if (password !== ui.confirm.value) throw new Error('Master passwords do not match.');
@@ -109,6 +129,7 @@ async function unlockOrCreate(event) {
       vaultKey = await deriveKey(password, salt); vaultRecord = { id:'primary', version:1, kdf:'PBKDF2-SHA256', iterations:KDF_ITERATIONS, salt:toB64(salt) };
       entries = []; await persist();
     }
+    if (session !== vaultSession) return;
     ui.master.value = ''; ui.confirm.value = ''; ui.gate.classList.add('hidden'); ui.vault.classList.remove('hidden');
     render(); resetAutoLock(); $('search').focus();
   } catch (error) {
@@ -116,13 +137,19 @@ async function unlockOrCreate(event) {
   } finally { ui.unlockBtn.disabled = false; setGateMode(hasStoredVault); }
 }
 function lockVault() {
+  vaultSession++;
   vaultKey = null; entries = []; vaultRecord = null; clearTimeout(lockTimeout);
   ui.vault.classList.add('hidden'); ui.gate.classList.remove('hidden'); ui.master.value=''; ui.confirm.value=''; ui.search.value='';
+  if (ui.entryDialog.open) ui.entryDialog.close();
+  if (ui.generatorDialog.open) ui.generatorDialog.close();
+  if (ui.confirmDialog.open) ui.confirmDialog.close();
+  $('generated-value').textContent = '';
+  ui.entryForm.reset();
   ui.entries.replaceChildren(); showError('');
   readRecord().then(record => { hasStoredVault=Boolean(record); setGateMode(hasStoredVault); }).catch(() => setGateMode(false));
 }
 function resetAutoLock() {
-  clearTimeout(lockTimeout); lastActivity = Date.now();
+  clearTimeout(lockTimeout);
   lockTimeout = setTimeout(() => { if (vaultKey) { lockVault(); toast('Vault locked after 5 minutes of inactivity.'); } }, AUTO_LOCK_MS);
 }
 function openEntry(item = null) {
@@ -136,8 +163,15 @@ async function saveEntry(event) {
   const id = $('entry-id').value; const old = entries.find(item => item.id === id);
   const item = validateEntry({ id: id || newId(), title:$('entry-title').value.trim(), username:$('entry-username').value, password:$('entry-password').value, url:$('entry-url').value.trim(), notes:$('entry-notes').value, category:$('entry-category').value, favorite:$('entry-favorite').checked, createdAt:old?.createdAt || Date.now(), updatedAt:Date.now() });
   if (!item.title || !item.password) { toast('Service name and password are required.', true); return; }
-  try { const nextEntries = old ? entries.map(value => value.id === id ? item : value) : [item, ...entries]; await persist(nextEntries); entries = nextEntries; ui.entryDialog.close(); render(); toast(old ? 'Password updated and encrypted.' : 'Password added and encrypted.'); resetAutoLock(); }
-  catch (error) { toast(error.message || 'Could not save item.', true); }
+  try {
+    const values = { ...item };
+    await commitEntries(current => {
+      const currentItem = current.find(value => value.id === id);
+      values.createdAt = currentItem?.createdAt || values.createdAt;
+      return currentItem ? current.map(value => value.id === id ? values : value) : [values, ...current];
+    });
+    ui.entryDialog.close(); toast(id ? 'Password updated and encrypted.' : 'Password added and encrypted.'); resetAutoLock();
+  } catch (error) { toast(error.message || 'Could not save item.', true); }
 }
 function passwordScore(password) {
   if (!password) return 0;
@@ -182,19 +216,29 @@ function downloadBackup() {
 async function importBackup(file) {
   if (!file || file.size > 20_000_000) throw new Error('Backup is too large or unavailable.');
   const backup = JSON.parse(await file.text());
-  if (!backup || backup.app !== 'PassSafe' || backup.formatVersion !== 1 || backup.kdf !== 'PBKDF2-SHA256' || backup.iterations !== KDF_ITERATIONS || !backup.salt || !backup.iv || !backup.ciphertext) throw new Error('This is not a supported PassSafe backup.');
+  const envelope = validateBackupEnvelope(backup);
   const password = window.prompt('Enter the master password for this backup. It is not sent anywhere.');
   if (password === null) return;
-  const key = await deriveKey(password, fromB64(backup.salt)); const imported = await decryptPayload(backup,key);
-  const record = { id:'primary', version:1, kdf:backup.kdf, iterations:backup.iterations, salt:backup.salt, iv:backup.iv, ciphertext:backup.ciphertext, updatedAt:Date.now() };
+  const key = await deriveKey(password, fromB64(envelope.salt));
+  const imported = await decryptPayload(envelope, key);
   if (!window.confirm(`Restore ${imported.length} items? This replaces the current local vault.`)) return;
-  await writeRecord(record); vaultRecord=record; vaultKey=key; entries=imported; render(); toast('Encrypted backup restored.'); resetAutoLock();
+  const record = { id:'primary', version:1, ...envelope, updatedAt:Date.now() };
+  const session = vaultSession;
+  const task = writeQueue.then(async () => {
+    if (session !== vaultSession || !vaultKey) throw new Error('Vault is locked. Unlock it before restoring a backup.');
+    await writeRecord(record);
+    if (session !== vaultSession || !vaultKey) throw new Error('Vault locked before the restore completed.');
+    vaultRecord = record; vaultKey = key; entries = imported; render();
+    toast('Encrypted backup restored.'); resetAutoLock();
+  });
+  writeQueue = task.catch(() => {});
+  await task;
 }
 function handleEntryAction(event) {
   const button = event.target.closest('button[data-action]'); if (!button) return;
   const item = entries.find(value => value.id === button.dataset.id); if (!item) return;
   switch (button.dataset.action) {
-    case 'favorite': { const nextEntries = entries.map(value => value.id === item.id ? { ...value, favorite:!value.favorite } : value); persist(nextEntries).then(() => { entries=nextEntries; render(); toast('Favorite updated.'); }).catch(error=>toast(error.message,true)); break; }
+    case 'favorite': commitEntries(current => current.map(value => value.id === item.id ? { ...value, favorite:!value.favorite } : value)).then(() => toast('Favorite updated.')).catch(error => toast(error.message, true)); break;
     case 'copy-user': copyText(item.username); break;
     case 'copy-pass': copyText(item.password); break;
     case 'edit': openEntry(item); break;
@@ -218,9 +262,11 @@ function wire() {
   $('use-generated').addEventListener('click',()=>{const value=$('generated-value').textContent;ui.generatorDialog.close();openEntry();$('entry-password').value=value; $('entry-password').type='text';updateStrength();});
   $('export-btn').addEventListener('click',downloadBackup); $('import-file').addEventListener('change',async event=>{try{await importBackup(event.target.files[0]);}catch(error){toast(error.message||'Could not import backup.',true);}finally{event.target.value='';}});
   $('lock-btn').addEventListener('click',()=>{lockVault();toast('Vault locked.');});
-  $('confirm-action').addEventListener('click',async()=>{if(!pendingDeleteId)return;try{const nextEntries=entries.filter(item=>item.id!==pendingDeleteId);await persist(nextEntries);entries=nextEntries;ui.confirmDialog.close();render();toast('Item deleted from vault.');}catch(error){toast(error.message,true);}finally{pendingDeleteId=null;}});
+  $('confirm-action').addEventListener('click',async()=>{if(!pendingDeleteId)return;try{await commitEntries(current => current.filter(item => item.id !== pendingDeleteId));ui.confirmDialog.close();toast('Item deleted from vault.');}catch(error){toast(error.message,true);}finally{pendingDeleteId=null;}});
   ['pointerdown','keydown','touchstart'].forEach(name=>document.addEventListener(name,()=>{if(vaultKey)resetAutoLock();},{passive:true}));
-  document.addEventListener('visibilitychange',()=>{if(document.hidden&&vaultKey&&Date.now()-lastActivity>AUTO_LOCK_MS)lockVault();});
+  ui.entryDialog.addEventListener('close', () => { $('entry-password').value = ''; $('entry-notes').value = ''; $('entry-username').value = ''; updateStrength(); });
+  ui.generatorDialog.addEventListener('close', () => { $('generated-value').textContent = ''; });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && vaultKey) { lockVault(); toast('Vault locked because the tab was hidden.'); } });
   window.addEventListener('beforeunload',()=>{vaultKey=null;entries=[];});
 }
 async function init() {
