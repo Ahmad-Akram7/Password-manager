@@ -28,13 +28,13 @@ export function parseCSV(text) {
     else if (ch === '\n' || ch === '\r') {
       if (ch === '\r' && text[i + 1] === '\n') i++;
       row.push(field); field = '';
-      if (row.some(value => value.length)) rows.push(row);
+      if (row.some(value => value.trim().length)) rows.push(row);
       row = [];
       if (rows.length > MAX_ROWS + 1) throw new Error('CSV contains too many rows.');
     } else field += ch;
   }
   if (quoted) throw new Error('CSV contains an unterminated quoted field.');
-  if (field.length || row.length) { row.push(field); if (row.some(value => value.length)) rows.push(row); }
+  if (field.length || row.length) { row.push(field); if (row.some(value => value.trim().length)) rows.push(row); }
   if (!rows.length) throw new Error('CSV file is empty.');
   const headers = rows.shift().map((value, index) => (index === 0 ? value.replace(/^\uFEFF/, '') : value).trim().toLowerCase());
   if (!headers.some(Boolean)) throw new Error('CSV header row is missing.');
