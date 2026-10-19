@@ -62,11 +62,11 @@ export function normalizeBrowserCSV(text, idFactory = () => crypto.randomUUID())
       try { title = new URL(url.includes('://') ? url : 'https://' + url).hostname || url; }
       catch { title = url; }
     }
-    if (!title || !password) { skipped++; continue; }
+    if (!title || !password || password.length > 4096) { skipped++; continue; }
     const category = first(row, ['category']) || 'Login';
     imported.push({
       id: idFactory(), title: title.slice(0, 120), username: username.slice(0, 254),
-      password: password.slice(0, 4096), url: url.slice(0, 2048),
+      password, url: url.slice(0, 2048),
       notes: first(row, ['notes', 'note', 'comments']).slice(0, 5000),
       category: ['Login', 'Banking', 'Work', 'Personal', 'Other'].includes(category) ? category : 'Login',
       favorite: ['true', 'yes', '1'].includes(first(row, ['favorite', 'favourite']).toLowerCase()),
