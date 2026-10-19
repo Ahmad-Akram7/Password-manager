@@ -38,13 +38,13 @@ export function parseCSV(text) {
   if (!rows.length) throw new Error('CSV file is empty.');
   const headers = rows.shift().map((value, index) => (index === 0 ? value.replace(/^\uFEFF/, '') : value).trim().toLowerCase());
   if (!headers.some(Boolean)) throw new Error('CSV header row is missing.');
-  return rows.map(values => Object.fromEntries(headers.map((header, i) => [header, String(values[i] ?? '').trim()])));
+  return rows.map(values => Object.fromEntries(headers.map((header, i) => [header, String(values[i] ?? '')])));
 }
 
-function first(row, names) {
+function first(row, names, trim = true) {
   for (const name of names) {
     const value = row[name];
-    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'string' && (trim ? value.trim() : value.length > 0)) return trim ? value.trim() : value;
   }
   return '';
 }
@@ -56,7 +56,7 @@ export function normalizeBrowserCSV(text, idFactory = () => crypto.randomUUID())
   for (const row of rows) {
     const url = first(row, ['url', 'website', 'website url', 'hostname', 'origin', 'formactionorigin']);
     const username = first(row, ['username', 'user name', 'user', 'login', 'email', 'email address']);
-    const password = first(row, ['password', 'pass']);
+    const password = first(row, ['password', 'pass'], false);
     let title = first(row, ['name', 'title', 'site', 'website name', 'hostname']);
     if (!title && url) {
       try { title = new URL(url.includes('://') ? url : 'https://' + url).hostname || url; }
