@@ -8,7 +8,8 @@ PassSafe is a static app. It does not send vault data to an application server, 
 - Each save uses a new random 96-bit nonce. AES-GCM authenticates the encrypted data and the fixed context string `PassSafe:v1`.
 - Entry data is encrypted together, including usernames, website URLs, passwords, notes, and favorites.
 - The master password is not stored. The derived key remains in page memory while the vault is open and is discarded when the app locks or the page unloads.
-- Backup files contain encrypted data and the metadata needed to derive the key. Restore decrypts and validates the backup before asking to replace the current vault.
+- Encrypted `.passsafe` backup files contain authenticated ciphertext and the metadata needed to derive the key. Restore decrypts and validates the backup before asking to replace the current vault. Existing `.json` PassSafe backups remain importable.
+- CSV export is intentionally plaintext for portability. Chrome, Brave, and Firefox password CSV exports can be imported locally; imported CSV rows are merged without replacing existing vault entries, and duplicate site/account combinations are skipped.
 - Password generation uses the browser's cryptographic random source and rejection sampling to avoid modulo bias.
 
 ## What this protects against
@@ -19,6 +20,7 @@ It helps protect a saved vault if someone obtains the browser's IndexedDB record
 
 - A compromised device, malicious browser extension, keylogger, or compromised hosting origin can read entries while the vault is unlocked.
 - The browser may keep sensitive data in memory until it is reclaimed. JavaScript cannot guarantee secure erasure of memory.
+- Plaintext CSV exports contain readable passwords. Anyone with access to the file can read them; store them only briefly in a trusted location and securely delete them after use.
 - Clipboard contents can remain available to other applications after copying.
 - Data is local to one browser profile. There is no sync or account recovery.
 - PBKDF2 is used because it is built into the Web Crypto API. Argon2id can offer better resistance to password guessing, but requires an additional implementation and supply-chain review.
