@@ -1,4 +1,5 @@
 import { KDF_ITERATIONS, toB64, fromB64, deriveKey, encryptPayload, decryptPayload, validateEntry, validateBackupEnvelope } from './crypto-core.js';
+import { entriesToCSV, normalizeBrowserCSV, mergeImportedEntries } from './import-export.js';
 
 /* PassSafe stores only an authenticated ciphertext in IndexedDB. No network calls. */
 const DB_NAME = 'passsafe-local-vault';
@@ -208,20 +209,34 @@ async function copyText(value) {
   try { await navigator.clipboard.writeText(value); toast('Copied. Clipboard may retain it until cleared.'); resetAutoLock(); }
   catch { toast('Clipboard access is unavailable in this browser.', true); }
 }
-function downloadBackup() {
-  const backup = { app:'PassSafe', formatVersion:1, createdAt:new Date().toISOString(), kdf:vaultRecord.kdf, iterations:vaultRecord.iterations, salt:vaultRecord.salt, iv:vaultRecord.iv, ciphertext:vaultRecord.ciphertext };
-  const url = URL.createObjectURL(new Blob([JSON.stringify(backup,null,2)], {type:'application/json'}));
-  const a = document.createElement('a'); a.href=url; a.download=`passsafe-backup-${new Date().toISOString().slice(0,10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); toast('Encrypted backup exported. Keep it somewhere private.');
+function triggerDownload(contents, type, filename) {
+  const url = URL.createObjectURL(new Blob([contents], { type }));
+  const anchor = document.createElement('a');
+  anchor.href = url; anchor.download = filename; anchor.rel = 'noopener';
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-async function importBackup(file) {
-  if (!file || file.size > 20_000_000) throw new Error('Backup is too large or unavailable.');
-  const backup = JSON.parse(await file.text());
+function downloadBackup() {
+  if (!vaultKey || !vaultRecord) throw new Error('Unlock the vault before exporting.');
+  const backup = { app:'PassSafe', formatVersion:1, createdAt:new Date().toISOString(), kdf:vaultRecord.kdf, iterations:vaultRecord.iterations, salt:vaultRecord.salt, iv:vaultRecord.iv, ciphertext:vaultRecord.ciphertext };
+  triggerDownload(JSON.stringify(backup,null,2), 'application/json', `passsafe-encrypted-backup-${new Date().toISOString().slice(0,10)}.passsafe`);
+  toast('Encrypted backup exported. Keep it somewhere private.');
+}
+function downloadPlainCSV() {
+  if (!vaultKey) throw new Error('Unlock the vault before exporting.');
+  if (!window.confirm('Plaintext CSV contains readable passwords. Anyone who obtains this file can read them. Export only to a trusted location, then securely delete it when finished. Continue?')) return;
+  triggerDownload(entriesToCSV(entries), 'text/csv;charset=utf-8', `passsafe-passwords-${new Date().toISOString().slice(0,10)}.csv`);
+  toast('Plaintext CSV exported. It is not encrypted.');
+}
+async function restoreEncryptedBackup(file, text) {
+  let backup;
+  try { backup = JSON.parse(text); } catch { throw new Error('This file is not a valid PassSafe encrypted backup or CSV.'); }
   const envelope = validateBackupEnvelope(backup);
-  const password = window.prompt('Enter the master password for this backup. It is not sent anywhere.');
+  const password = window.prompt('Enter the master password used when this backup was exported. It is processed locally and is not sent anywhere.');
   if (password === null) return;
   const key = await deriveKey(password, fromB64(envelope.salt));
   const imported = await decryptPayload(envelope, key);
-  if (!window.confirm(`Restore ${imported.length} items? This replaces the current local vault.`)) return;
+  if (!window.confirm(`Restore ${imported.length} items? This replaces the current local vault and makes the backup's master password the password for this vault.`)) return;
   const record = { id:'primary', version:1, ...envelope, updatedAt:Date.now() };
   const session = vaultSession;
   const task = writeQueue.then(async () => {
@@ -233,6 +248,27 @@ async function importBackup(file) {
   });
   writeQueue = task.catch(() => {});
   await task;
+}
+async function importCSV(text) {
+  const parsed = normalizeBrowserCSV(text, newId);
+  const merged = mergeImportedEntries(entries, parsed.entries.map(validateEntry));
+  if (!merged.added) {
+    toast(`No new passwords imported; ${merged.duplicates} duplicate(s) were skipped.`);
+    return;
+  }
+  const summary = `Import ${merged.added} password(s)? ${merged.duplicates} duplicate(s) will be skipped. Existing vault entries will be kept.`;
+  if (!window.confirm(summary)) return;
+  await commitEntries(merged.entries);
+  toast(`Imported ${merged.added} password(s); skipped ${merged.duplicates} duplicate(s).`);
+  resetAutoLock();
+}
+async function importFile(file) {
+  if (!file || file.size > 20_000_000) throw new Error('File is too large or unavailable (maximum 20 MB).');
+  if (!vaultKey) throw new Error('Unlock the vault before importing passwords.');
+  const text = await file.text();
+  const looksLikeJSON = file.name.toLowerCase().endsWith('.json') || file.name.toLowerCase().endsWith('.passsafe') || text.trimStart().startsWith('{');
+  if (looksLikeJSON) await restoreEncryptedBackup(file, text);
+  else await importCSV(text);
 }
 function handleEntryAction(event) {
   const button = event.target.closest('button[data-action]'); if (!button) return;
@@ -260,7 +296,7 @@ function wire() {
   $('regenerate').addEventListener('click',()=>{try{$('generated-value').textContent=generatePassword(Number($('gen-length').value));}catch(e){toast(e.message,true);}});
   $('copy-generated').addEventListener('click',()=>copyText($('generated-value').textContent));
   $('use-generated').addEventListener('click',()=>{const value=$('generated-value').textContent;ui.generatorDialog.close();openEntry();$('entry-password').value=value; $('entry-password').type='text';updateStrength();});
-  $('export-btn').addEventListener('click',downloadBackup); $('import-file').addEventListener('change',async event=>{try{await importBackup(event.target.files[0]);}catch(error){toast(error.message||'Could not import backup.',true);}finally{event.target.value='';}});
+  $('export-btn').addEventListener('click',()=> $('transfer-dialog').showModal()); $('export-encrypted').addEventListener('click',()=>{try{downloadBackup();$('transfer-dialog').close();}catch(error){toast(error.message,true);}}); $('export-csv').addEventListener('click',()=>{try{downloadPlainCSV();if(!$('transfer-dialog').open)return;$('transfer-dialog').close();}catch(error){toast(error.message,true);}}); $('import-file').addEventListener('change',async event=>{try{await importFile(event.target.files[0]);}catch(error){toast(error.message||'Could not import file.',true);}finally{event.target.value='';}});
   $('lock-btn').addEventListener('click',()=>{lockVault();toast('Vault locked.');});
   $('confirm-action').addEventListener('click',async()=>{if(!pendingDeleteId)return;try{await commitEntries(current => current.filter(item => item.id !== pendingDeleteId));ui.confirmDialog.close();toast('Item deleted from vault.');}catch(error){toast(error.message,true);}finally{pendingDeleteId=null;}});
   ['pointerdown','keydown','touchstart'].forEach(name=>document.addEventListener(name,()=>{if(vaultKey)resetAutoLock();},{passive:true}));
