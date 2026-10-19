@@ -224,9 +224,10 @@ function downloadBackup() {
 }
 function downloadPlainCSV() {
   if (!vaultKey) throw new Error('Unlock the vault before exporting.');
-  if (!window.confirm('Plaintext CSV contains readable passwords. Anyone who obtains this file can read them. Export only to a trusted location, then securely delete it when finished. Continue?')) return;
+  if (!window.confirm('Plaintext CSV contains readable passwords. Anyone who obtains this file can read them. Export only to a trusted location, then securely delete it when finished. Continue?')) return false;
   triggerDownload(entriesToCSV(entries), 'text/csv;charset=utf-8', `passsafe-passwords-${new Date().toISOString().slice(0,10)}.csv`);
   toast('Plaintext CSV exported. It is not encrypted.');
+  return true;
 }
 async function restoreEncryptedBackup(file, text) {
   let backup;
@@ -296,7 +297,7 @@ function wire() {
   $('regenerate').addEventListener('click',()=>{try{$('generated-value').textContent=generatePassword(Number($('gen-length').value));}catch(e){toast(e.message,true);}});
   $('copy-generated').addEventListener('click',()=>copyText($('generated-value').textContent));
   $('use-generated').addEventListener('click',()=>{const value=$('generated-value').textContent;ui.generatorDialog.close();openEntry();$('entry-password').value=value; $('entry-password').type='text';updateStrength();});
-  $('export-btn').addEventListener('click',()=> $('transfer-dialog').showModal()); $('export-encrypted').addEventListener('click',()=>{try{downloadBackup();$('transfer-dialog').close();}catch(error){toast(error.message,true);}}); $('export-csv').addEventListener('click',()=>{try{downloadPlainCSV();if(!$('transfer-dialog').open)return;$('transfer-dialog').close();}catch(error){toast(error.message,true);}}); $('import-file').addEventListener('change',async event=>{try{await importFile(event.target.files[0]);}catch(error){toast(error.message||'Could not import file.',true);}finally{event.target.value='';}});
+  $('export-btn').addEventListener('click',()=> $('transfer-dialog').showModal()); $('export-encrypted').addEventListener('click',()=>{try{downloadBackup();$('transfer-dialog').close();}catch(error){toast(error.message,true);}}); $('export-csv').addEventListener('click',()=>{try{if(downloadPlainCSV())$('transfer-dialog').close();}catch(error){toast(error.message,true);}}); $('import-file').addEventListener('change',async event=>{try{await importFile(event.target.files[0]);}catch(error){toast(error.message||'Could not import file.',true);}finally{event.target.value='';}});
   $('lock-btn').addEventListener('click',()=>{lockVault();toast('Vault locked.');});
   $('confirm-action').addEventListener('click',async()=>{if(!pendingDeleteId)return;try{await commitEntries(current => current.filter(item => item.id !== pendingDeleteId));ui.confirmDialog.close();toast('Item deleted from vault.');}catch(error){toast(error.message,true);}finally{pendingDeleteId=null;}});
   ['pointerdown','keydown','touchstart'].forEach(name=>document.addEventListener(name,()=>{if(vaultKey)resetAutoLock();},{passive:true}));
